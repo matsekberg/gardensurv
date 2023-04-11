@@ -1,0 +1,281 @@
+substitutions:
+  dallas_pin: GPIO9
+  statusled_pin: GPIO15
+  auxled_pin: GPIO12
+  vbat_pin: GPIO3
+  vpnl_pin: GPIO5
+
+globals:
+  - id: do_check
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: time_synced
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: temp1_sent
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: temp2_sent
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: vbat_sent
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: vpnl_sent
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: deepsleep_ok
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+
+esphome:
+  name: soiltemp
+  on_boot:  
+    - priority: -10
+      then:
+        - wait_until:
+            mqtt.connected:
+        - globals.set:
+            id: temp1_sent
+            value: 'false'
+        - globals.set:
+            id: temp2_sent
+            value: 'false'
+        - globals.set:
+            id: vbat_sent
+            value: 'false'
+        - globals.set:
+            id: vpnl_sent
+            value: 'false'
+        - globals.set:
+            id: do_check
+            value: 'true'
+        - logger.log: "### Enable message sent checks"
+
+esp32:
+  board: lolin_s2_mini
+
+# Enable logging
+logger:
+  level: DEBUG
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: "Europe/Stockholm" # CHANGE TO YOUR OWN LOCATION
+    on_time_sync:
+      then:
+        - logger.log: "### Synchronized system clock"
+        - globals.set:
+            id: time_synced
+            value: 'true'
+
+ota:
+  password: ""
+
+web_server:
+  port: 80
+
+api: 
+
+wifi:
+  ssid:     "YOUR_SSID" # CHANGE TO YOUR OWN SSID
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Temp7A Fallback Hotspot"
+    password: "fallback"
+
+captive_portal:
+
+mqtt:
+  broker: 10.0.1.50
+  discovery: false
+  on_message:
+
+    - topic: "soiltemp/sensor/temp1/state"
+      then:
+        - globals.set:
+            id: temp1_sent
+            value: 'true'
+        - logger.log: "### temp1 sent"
+        - script.execute: check_and_sleep
+
+    - topic: "soiltemp/sensor/temp2/state"
+      then:
+        - globals.set:
+            id: temp2_sent
+            value: 'true'
+        - logger.log: "### temp2 sent"
+        - script.execute: check_and_sleep
+
+    - topic: "soiltemp/sensor/vbat/state"
+      then:
+        - globals.set:
+            id: vbat_sent
+            value: 'true'
+        - logger.log: "### Vbat sent"
+        - script.execute: check_and_sleep
+
+    - topic: "soiltemp/sensor/vpnl/state"
+      then:
+        - globals.set:
+            id: vpnl_sent
+            value: 'true'
+        - logger.log: "### Vpanel sent"
+        - script.execute: check_and_sleep
+
+    - topic: "soiltemp/flag/deepsleep"
+      payload: 'OFF'
+      then:
+        - logger.log: "### deep sleep disabled"
+        - globals.set:
+            id: deepsleep_ok
+            value: 'false'
+        - deep_sleep.prevent: deep_sleep_component
+
+    - topic: "soiltemp/flag/deepsleep"
+      payload: 'ON'
+      then:
+        - logger.log: "### deep sleep enabled"
+        - globals.set:
+            id: deepsleep_ok
+            value: 'true'
+        - deep_sleep.enter: deep_sleep_component
+
+text_sensor:
+  - platform: version
+    name: "ESPHome Version"
+  - platform: wifi_info
+    ip_address:
+      name: ESP IP Address
+#    ssid:
+#      name: ESP Connected SSID
+#    mac_address:
+#      name: ESP Mac Wifi Address
+
+  - platform: template
+    name: "Current Time and Date"
+    id: time_date
+    update_interval: 1s
+    lambda: |-
+      auto time = id(sntp_time).now();
+      if (time.year != 1970) {
+        char buffer[20];
+        sprintf(buffer, "%04d-%02d-%02d %02d:%02d:%02d", time.year, time.month, time.day_of_month, time.hour, time.minute, time.second);
+        return std::string(buffer);
+      } else {
+        return std::string("N/A");
+      }
+
+########## OUTPUT ##########
+
+output:
+  - platform: gpio
+    id: auxout
+    pin: $auxled_pin
+    inverted: false
+light:
+  - platform: binary
+    id: auxled
+    name: "AUX LED"
+    output: auxout
+    internal: true
+# Use builtin LED as status
+  - platform: status_led
+    id: statusled
+    name: "Status LED"
+    pin: $statusled_pin
+    internal: true
+
+interval:
+  - interval: 500ms  # Set the blinking interval to 100ms for fast blinking
+    then:
+      - light.turn_on: auxled
+      - delay: 50ms
+      - light.turn_off: auxled
+
+########## INPUT ##########
+
+dallas:
+  - pin: $dallas_pin
+    update_interval: 5s
+
+sensor:
+  - platform: dallas
+    id: temp1
+    name: "temp1"
+    address: 0xc5011433c9bba828 # CHANGE TO YOUR OWN ID
+    filters:
+      - lambda: |-
+          if (x < -30 || x > 30) return {};
+          return x;
+      - filter_out: 85.0
+      - filter_out: nan
+
+  - platform: dallas
+    id: temp2
+    name: "temp2"
+    address: 0x270115915712ff28 # CHANGE TO YOUR OWN ID
+    filters:
+      - lambda: |-
+          if (x < -30 || x > 30) return {};
+          return x;
+      - filter_out: 85.0
+      - filter_out: nan
+
+  - platform: adc
+    id: vbat
+    pin: $vbat_pin
+    attenuation: 11db
+    name: "vbat"
+    update_interval: 2s
+    filters:
+      - multiply: 2.056 # CHANGE TO YOUR OWN CALIBRATION
+
+  - platform: adc
+    id: vpnl
+    pin: $vpnl_pin
+    attenuation: 11db
+    name: "vpnl"
+    update_interval: 2s
+    filters:
+      - multiply: 2.822 # CHANGE TO YOUR OWN CALIBRATION
+
+  - platform: wifi_signal # Reports the WiFi signal strength/RSSI in dB
+    name: "WiFi Signal dB"
+    id: wifi_signal_db
+    update_interval: 5s
+    entity_category: "diagnostic"
+  - platform: copy # Reports the WiFi signal strength in %
+    source_id: wifi_signal_db
+    name: "WiFi Signal Percent"
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    entity_category: "diagnostic"
+
+script:
+  - id: check_and_sleep
+    then:
+      - if:
+          condition:
+            lambda: 'return id(do_check) && id(temp1_sent) && id(temp2_sent) && id(vbat_sent) && id(vpnl_sent) && id(time_synced) && id(deepsleep_ok);'
+          then:
+            - logger.log: "### Going to deep sleep..."
+            - light.turn_off: statusled
+            - light.turn_off: auxled
+            - delay: 2s
+            - deep_sleep.enter: deep_sleep_component
+
+deep_sleep:
+  id: deep_sleep_component
+  run_duration: 60s
+  sleep_duration: 10min
