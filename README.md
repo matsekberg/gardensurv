@@ -11,5 +11,5 @@ The code is here: https://github.com/matsekberg/gardensurv/tree/main/soiltemp
 Some parts of the code must be changed to adapt to your environment. 
 The ESP32-board used is a ESP32_S2 mini from Lolin.
 
-## Box
+### Box
 The 3d-printed box can be found here: https://www.printables.com/model/449771-a-solar-powered-measurement-device
